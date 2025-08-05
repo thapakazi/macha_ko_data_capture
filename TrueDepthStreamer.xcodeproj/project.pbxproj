@@ -26,6 +26,8 @@
 		E46129041CF4C0B8004FE176 /* PreviewMetalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E46129031CF4C0B8004FE176 /* PreviewMetalView.swift */; };
 		E4A8A1421CF6188A006823AB /* PassThrough.metal in Sources */ = {isa = PBXBuildFile; fileRef = E4A8A1411CF6188A006823AB /* PassThrough.metal */; };
 		E4E160DB1D00979000C83A5A /* FilterRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4E160DA1D00979000C83A5A /* FilterRenderer.swift */; };
+		CD123456789ABCDEF0123456 /* CaptureData.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD123456789ABCDEF0123455 /* CaptureData.swift */; };
+		CD123456789ABCDEF0123458 /* MainTabBarController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD123456789ABCDEF0123457 /* MainTabBarController.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -58,6 +60,8 @@
 		E46129031CF4C0B8004FE176 /* PreviewMetalView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = PreviewMetalView.swift; sourceTree = "<group>"; };
 		E4A8A1411CF6188A006823AB /* PassThrough.metal */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.metal; path = PassThrough.metal; sourceTree = "<group>"; };
 		E4E160DA1D00979000C83A5A /* FilterRenderer.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = FilterRenderer.swift; sourceTree = "<group>"; };
+		CD123456789ABCDEF0123455 /* CaptureData.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = CaptureData.swift; sourceTree = "<group>"; };
+		CD123456789ABCDEF0123457 /* MainTabBarController.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = MainTabBarController.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -156,6 +160,8 @@
 				C3B256711FDE655100617DD7 /* HistogramCalculator.m */,
 				E422DFCD1CEF8AF50047D7A4 /* AppDelegate.swift */,
 				E422DFCC1CEF8AF50047D7A4 /* CameraViewController.swift */,
+				CD123456789ABCDEF0123455 /* CaptureData.swift */,
+				CD123456789ABCDEF0123457 /* MainTabBarController.swift */,
 				E46129031CF4C0B8004FE176 /* PreviewMetalView.swift */,
 				E4E160DA1D00979000C83A5A /* FilterRenderer.swift */,
 				2633CF1C1E7C65D500FC80E1 /* DepthToJETConverter.swift */,
@@ -260,6 +266,8 @@
 				2672370E1E79BFC0003D2EAA /* DepthToJET.metal in Sources */,
 				E46129041CF4C0B8004FE176 /* PreviewMetalView.swift in Sources */,
 				E422DFCE1CEF8AF50047D7A4 /* CameraViewController.swift in Sources */,
+				CD123456789ABCDEF0123456 /* CaptureData.swift in Sources */,
+				CD123456789ABCDEF0123458 /* MainTabBarController.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

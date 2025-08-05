@@ -11,6 +11,251 @@ import CoreVideo
 import MobileCoreServices
 import Accelerate
 import Photos
+import Compression
+
+// MARK: - Simple Gallery View Controller
+class SimpleGalleryViewController: UIViewController {
+    private var tableView: UITableView!
+    private var captures: [CaptureData] = []
+    
+    private let dateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter
+    }()
+    
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        setupUI()
+        loadCaptures()
+    }
+    
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        loadCaptures()
+    }
+    
+    private func setupUI() {
+        title = "Gallery"
+        view.backgroundColor = .black
+        
+        // Add close button
+        navigationItem.leftBarButtonItem = UIBarButtonItem(
+            barButtonSystemItem: .done,
+            target: self,
+            action: #selector(closeButtonTapped)
+        )
+        
+        // Create table view
+        tableView = UITableView()
+        tableView.delegate = self
+        tableView.dataSource = self
+        tableView.backgroundColor = .black
+        tableView.separatorColor = .darkGray
+        tableView.register(UITableViewCell.self, forCellReuseIdentifier: "Cell")
+        tableView.translatesAutoresizingMaskIntoConstraints = false
+        
+        view.addSubview(tableView)
+        
+        NSLayoutConstraint.activate([
+            tableView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        ])
+    }
+    
+    @objc private func closeButtonTapped() {
+        dismiss(animated: true)
+    }
+    
+    private func loadCaptures() {
+        captures = CaptureManager.shared.getAllCaptures()
+        tableView.reloadData()
+    }
+}
+
+extension SimpleGalleryViewController: UITableViewDataSource, UITableViewDelegate {
+    func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
+        return captures.isEmpty ? 1 : captures.count
+    }
+    
+    func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        let cell = tableView.dequeueReusableCell(withIdentifier: "Cell", for: indexPath)
+        
+        if captures.isEmpty {
+            cell.textLabel?.text = "No captures yet"
+            cell.textLabel?.textColor = .lightGray
+            cell.textLabel?.textAlignment = .center
+            cell.selectionStyle = .none
+        } else {
+            let capture = captures[indexPath.row]
+            cell.textLabel?.text = "Capture \(Int(capture.timestamp))"
+            cell.detailTextLabel?.text = dateFormatter.string(from: capture.date)
+            cell.textLabel?.textColor = .white
+            cell.detailTextLabel?.textColor = .lightGray
+            cell.backgroundColor = .black
+        }
+        
+        return cell
+    }
+    
+    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+        tableView.deselectRow(at: indexPath, animated: true)
+        
+        guard !captures.isEmpty else { return }
+        
+        let capture = captures[indexPath.row]
+        
+        // Create simple detail view
+        let alert = UIAlertController(
+            title: "Capture Details",
+            message: "ID: \(capture.id)\nDate: \(dateFormatter.string(from: capture.date))\nFiles: \(getFileCount(for: capture))",
+            preferredStyle: .alert
+        )
+        
+        alert.addAction(UIAlertAction(title: "Share", style: .default) { _ in
+            self.shareCapture(capture)
+        })
+        
+        alert.addAction(UIAlertAction(title: "Close", style: .cancel))
+        
+        present(alert, animated: true)
+    }
+    
+    // Enable swipe to delete
+    func tableView(_ tableView: UITableView, commit editingStyle: UITableViewCell.EditingStyle, forRowAt indexPath: IndexPath) {
+        if editingStyle == .delete && !captures.isEmpty {
+            let capture = captures[indexPath.row]
+            
+            let alert = UIAlertController(
+                title: "Delete Capture",
+                message: "This will permanently delete all files for this capture. This cannot be undone.",
+                preferredStyle: .alert
+            )
+            
+            alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+            alert.addAction(UIAlertAction(title: "Delete", style: .destructive) { _ in
+                // Delete from manager (this also deletes files)
+                CaptureManager.shared.deleteCapture(withID: capture.id)
+                
+                // Update local array and table view
+                self.captures.remove(at: indexPath.row)
+                tableView.deleteRows(at: [indexPath], with: .fade)
+                
+                // Show empty state if needed
+                if self.captures.isEmpty {
+                    tableView.reloadData()
+                }
+            })
+            
+            present(alert, animated: true)
+        }
+    }
+    
+    private func getFileCount(for capture: CaptureData) -> Int {
+        var count = 0
+        if CaptureManager.shared.fileExists(at: capture.calibrationJSONPath) { count += 1 }
+        if CaptureManager.shared.fileExists(at: capture.depthTIFFPath) { count += 1 }
+        if CaptureManager.shared.fileExists(at: capture.depthBinaryPath) { count += 1 }
+        if CaptureManager.shared.fileExists(at: capture.metadataJSONPath) { count += 1 }
+        if CaptureManager.shared.fileExists(at: capture.rgbImagePath) { count += 1 }
+        if CaptureManager.shared.fileExists(at: capture.jetImagePath) { count += 1 }
+        return count
+    }
+    
+    private func shareCapture(_ capture: CaptureData) {
+        // Show loading indicator
+        let loadingAlert = UIAlertController(title: "Preparing files...", message: "Please wait", preferredStyle: .alert)
+        present(loadingAlert, animated: true)
+        
+        // Create archive file in background
+        DispatchQueue.global(qos: .userInitiated).async {
+            if let archiveFileURL = CaptureManager.shared.createZipFile(for: capture) {
+                DispatchQueue.main.async {
+                    loadingAlert.dismiss(animated: true) {
+                        // Create description for the share
+                        let dateFormatter = DateFormatter()
+                        dateFormatter.dateStyle = .medium
+                        dateFormatter.timeStyle = .short
+                        
+                        let description = """
+                        TrueDepth Capture Archive
+                        
+                        Capture ID: \(capture.id)
+                        Date: \(dateFormatter.string(from: capture.date))
+                        Files: \(self.getFileCount(for: capture)) files
+                        
+                        Contains:
+                        • Camera calibration data (JSON)
+                        • 16-bit depth map (TIFF)
+                        • Raw binary depth data
+                        • Metadata (JSON) 
+                        • Original RGB photo (JPG)
+                        • JET-colored depth visualization (JPG)
+                        • Documentation (README.md)
+                        
+                        Generated by TrueDepth Streamer
+                        """
+                        
+                        let activityItems: [Any] = [description, archiveFileURL]
+                        let activityVC = UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
+                        
+                        if let popoverController = activityVC.popoverPresentationController {
+                            popoverController.sourceView = self.view
+                            popoverController.sourceRect = CGRect(x: self.view.bounds.midX, y: self.view.bounds.midY, width: 0, height: 0)
+                            popoverController.permittedArrowDirections = []
+                        }
+                        
+                        self.present(activityVC, animated: true)
+                    }
+                }
+            } else {
+                // Fallback to sharing individual files
+                let fileURLs = CaptureManager.shared.getFilesForSharing(for: capture)
+                
+                DispatchQueue.main.async {
+                    loadingAlert.dismiss(animated: true) {
+                        if !fileURLs.isEmpty {
+                            // Create description for individual files sharing
+                            let dateFormatter = DateFormatter()
+                            dateFormatter.dateStyle = .medium
+                            dateFormatter.timeStyle = .short
+                            
+                            let description = """
+                            TrueDepth Capture Files
+                            
+                            Capture ID: \(capture.id)
+                            Date: \(dateFormatter.string(from: capture.date))
+                            Files: \(fileURLs.count) individual files
+                            
+                            Generated by TrueDepth Streamer
+                            """
+                            
+                            var activityItems: [Any] = [description]
+                            activityItems.append(contentsOf: fileURLs)
+                            
+                            let activityVC = UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
+                            
+                            if let popoverController = activityVC.popoverPresentationController {
+                                popoverController.sourceView = self.view
+                                popoverController.sourceRect = CGRect(x: self.view.bounds.midX, y: self.view.bounds.midY, width: 0, height: 0)
+                                popoverController.permittedArrowDirections = []
+                            }
+                            
+                            self.present(activityVC, animated: true)
+                        } else {
+                            let errorAlert = UIAlertController(title: "Error", message: "No files found to share.", preferredStyle: .alert)
+                            errorAlert.addAction(UIAlertAction(title: "OK", style: .default))
+                            self.present(errorAlert, animated: true)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 
 @available(iOS 11.1, *)
 class CameraViewController: UIViewController, AVCaptureDataOutputSynchronizerDelegate {
@@ -106,6 +351,9 @@ class CameraViewController: UIViewController, AVCaptureDataOutputSynchronizerDel
         super.viewDidLoad()
         
         viewFrameSize = self.view.frame.size
+        
+        // Setup navigation
+        setupNavigation()
         
         // Initialize PhotoView on main thread
         photoView = PhotoView()
@@ -785,6 +1033,58 @@ class CameraViewController: UIViewController, AVCaptureDataOutputSynchronizerDel
             }
         }
         
+        // Share the latest capture as a ZIP file
+        let captures = CaptureManager.shared.getAllCaptures()
+        guard let latestCapture = captures.first else {
+            showAlert(title: "No Data", message: "Please capture some data first before sharing.")
+            return
+        }
+        
+        // Show loading indicator
+        let loadingAlert = UIAlertController(title: "Preparing files...", message: "Please wait", preferredStyle: .alert)
+        present(loadingAlert, animated: true)
+        
+        // Create archive file in background
+        DispatchQueue.global(qos: .userInitiated).async {
+            if let archiveFileURL = CaptureManager.shared.createZipFile(for: latestCapture) {
+                DispatchQueue.main.async {
+                    loadingAlert.dismiss(animated: true) {
+                        let description = "Latest TrueDepth Capture - Complete data package with calibration, depth maps, and photos"
+                        let activityItems: [Any] = [description, archiveFileURL]
+                        self.presentShareSheet(activityItems: activityItems, sourceView: sender)
+                    }
+                }
+            } else {
+                // Fallback to sharing individual files
+                let fileURLs = CaptureManager.shared.getFilesForSharing(for: latestCapture)
+                
+                DispatchQueue.main.async {
+                    loadingAlert.dismiss(animated: true) {
+                        if !fileURLs.isEmpty {
+                            let description = "Latest TrueDepth Capture - Individual files with calibration, depth maps, and photos"
+                            var activityItems: [Any] = [description]
+                            activityItems.append(contentsOf: fileURLs)
+                            self.presentShareSheet(activityItems: activityItems, sourceView: sender)
+                        } else {
+                            self.showAlert(title: "Error", message: "No files found to share.")
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    @IBAction func showGallery(_ sender: UIBarButtonItem) {
+        let galleryVC = SimpleGalleryViewController()
+        let navController = UINavigationController(rootViewController: galleryVC)
+        navController.navigationBar.barStyle = .black
+        navController.navigationBar.barTintColor = .black
+        navController.navigationBar.tintColor = .systemBlue
+        present(navController, animated: true)
+    }
+    
+    // Keep the old share functionality as backup (you can remove this if not needed)
+    private func shareButtonPressedOld(_ sender: UIButton) {
         // Share the latest calibration data and depth map
         guard let jsonString = latestCalibrationJSON else {
             showAlert(title: "No Data", message: "Please capture some data first before sharing.")
@@ -868,14 +1168,22 @@ class CameraViewController: UIViewController, AVCaptureDataOutputSynchronizerDel
         present(alert, animated: true)
     }
     
-    private func saveRawDepthMap(_ depthPixelBuffer: CVPixelBuffer) -> URL? {
+    private func saveRawDepthMap(_ depthPixelBuffer: CVPixelBuffer, captureFolder: URL? = nil) -> URL? {
         // Create timestamp for filename
         let timestamp = Int(Date().timeIntervalSince1970)
-        let tiffFileName = "raw_depth_map_\(timestamp).tiff"
+        let tiffFileName: String
+        let tiffFileURL: URL
         
-        // Use temporary directory for better compatibility with sharing
-        let tempDirectory = FileManager.default.temporaryDirectory
-        let tiffFileURL = tempDirectory.appendingPathComponent(tiffFileName)
+        if let captureFolder = captureFolder {
+            // Save to organized capture folder
+            tiffFileName = "depth.tiff"
+            tiffFileURL = captureFolder.appendingPathComponent(tiffFileName)
+        } else {
+            // Fallback to temporary directory for backward compatibility
+            tiffFileName = "raw_depth_map_\(timestamp).tiff"
+            let tempDirectory = FileManager.default.temporaryDirectory
+            tiffFileURL = tempDirectory.appendingPathComponent(tiffFileName)
+        }
         
         // Lock the pixel buffer for reading
         CVPixelBufferLockBaseAddress(depthPixelBuffer, .readOnly)
@@ -908,8 +1216,25 @@ class CameraViewController: UIViewController, AVCaptureDataOutputSynchronizerDel
         let dataLength = height * bytesPerRow
         let data = Data(bytes: baseAddress, count: dataLength)
         
-        let binaryFileName = "raw_depth_map_\(timestamp).depth"
-        let binaryFileURL = tempDirectory.appendingPathComponent(binaryFileName)
+        let binaryFileName: String
+        let binaryFileURL: URL
+        let metadataFileName: String
+        let metadataFileURL: URL
+        
+        if let captureFolder = captureFolder {
+            // Save to organized capture folder
+            binaryFileName = "depth.depth"
+            binaryFileURL = captureFolder.appendingPathComponent(binaryFileName)
+            metadataFileName = "metadata.json"
+            metadataFileURL = captureFolder.appendingPathComponent(metadataFileName)
+        } else {
+            // Fallback to temporary directory for backward compatibility
+            let tempDirectory = FileManager.default.temporaryDirectory
+            binaryFileName = "raw_depth_map_\(timestamp).depth"
+            binaryFileURL = tempDirectory.appendingPathComponent(binaryFileName)
+            metadataFileName = "raw_depth_map_\(timestamp)_metadata.json"
+            metadataFileURL = tempDirectory.appendingPathComponent(metadataFileName)
+        }
         
         // Create metadata dictionary
         let metadata: [String: Any] = [
@@ -920,10 +1245,6 @@ class CameraViewController: UIViewController, AVCaptureDataOutputSynchronizerDel
             "timestamp": timestamp,
             "tiffFile": tiffFileName
         ]
-        
-        // Save metadata as companion JSON file
-        let metadataFileName = "raw_depth_map_\(timestamp)_metadata.json"
-        let metadataFileURL = tempDirectory.appendingPathComponent(metadataFileName)
         
         do {
             // Save raw depth data
@@ -1176,7 +1497,21 @@ class CameraViewController: UIViewController, AVCaptureDataOutputSynchronizerDel
                                    intrinsicMatrix: simd_float3x3,
                                    fx: CGFloat, fy: CGFloat, cx: CGFloat, cy: CGFloat,
                                    refWidth: CGFloat, refHeight: CGFloat,
-                                   videoWidth: Int, videoHeight: Int) {
+                                   videoWidth: Int, videoHeight: Int,
+                                   timestamp: TimeInterval) -> (calibrationPath: String?, depthTIFFPath: String?, depthBinaryPath: String?, metadataPath: String?) {
+        
+        // Create organized folder structure for this capture
+        let timestampInt = Int(timestamp)
+        let captureID = "capture_\(timestampInt)"
+        let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        let captureFolder = documentsURL.appendingPathComponent("TrueDepthCaptures").appendingPathComponent(captureID)
+        
+        // Create capture folder if it doesn't exist
+        do {
+            try FileManager.default.createDirectory(at: captureFolder, withIntermediateDirectories: true, attributes: nil)
+        } catch {
+            print("Error creating capture folder: \(error)")
+        }
         var calibrationDict: [String: Any] = [
             "intrinsicMatrix": [
                 "fx": fx,
@@ -1232,7 +1567,20 @@ class CameraViewController: UIViewController, AVCaptureDataOutputSynchronizerDel
         // Add pixel size (convert to Double to ensure JSON serialization works)
         calibrationDict["pixelSize"] = Double(calibrationData.pixelSize)
         
-        // Save calibration data
+        // Add capture session metadata
+        calibrationDict["captureSession"] = [
+            "deviceModel": UIDevice.current.model,
+            "systemVersion": UIDevice.current.systemVersion,
+            "captureID": captureID,
+            "appVersion": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "Unknown"
+        ]
+        
+        var calibrationPath: String? = nil
+        var depthTIFFPath: String? = nil
+        var depthBinaryPath: String? = nil
+        var metadataPath: String? = nil
+        
+        // Save calibration data to organized folder
         do {
             let jsonData = try JSONSerialization.data(withJSONObject: calibrationDict, options: .prettyPrinted)
             let jsonString = String(data: jsonData, encoding: .utf8)
@@ -1242,35 +1590,136 @@ class CameraViewController: UIViewController, AVCaptureDataOutputSynchronizerDel
             // Store latest data for sharing
             self.latestCalibrationJSON = jsonString
             
-            let timestamp = Int(Date().timeIntervalSince1970)
-            let fileName = "calibration_\(timestamp).json"
+            // Save to organized capture folder
+            let calibrationFile = captureFolder.appendingPathComponent("calibration.json")
+            try jsonData.write(to: calibrationFile)
+            print("Calibration data saved to: \(calibrationFile.path)")
+            self.latestCalibrationFileURL = calibrationFile
+            calibrationPath = calibrationFile.path
             
-            // Save to documents directory (app private)
-            if let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
-                let fileURL = documentsPath.appendingPathComponent(fileName)
-                try jsonData.write(to: fileURL)
-                print("Calibration data saved to Documents: \(fileURL.path)")
-                self.latestCalibrationFileURL = fileURL
-            }
-            
-            // Also save to Files app accessible directory
-            let fileManager = FileManager.default
-            if let sharedContainerURL = fileManager.containerURL(forSecurityApplicationGroupIdentifier: "group.truedepth.calibration") {
-                // If you have an app group configured
-                let sharedFileURL = sharedContainerURL.appendingPathComponent(fileName)
-                try jsonData.write(to: sharedFileURL)
-                print("Calibration data saved to shared container: \(sharedFileURL.path)")
-            } else {
-                // Fallback: Create a temporary file for sharing
-                let tempURL = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(fileName)
-                try jsonData.write(to: tempURL)
-                print("Calibration data saved to temp directory for sharing: \(tempURL.path)")
-                self.latestCalibrationFileURL = tempURL
-            }
+            // Also save to temp for backward compatibility with share functionality
+            let tempURL = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("calibration_\(timestampInt).json")
+            try jsonData.write(to: tempURL)
+            self.latestCalibrationFileURL = tempURL
             
         } catch {
             print("Error serializing calibration data: \(error)")
         }
+        
+        // Set depth file paths (files are already saved in the right location)
+        if let rawDepthURL = latestRawDepthFileURL {
+            depthTIFFPath = rawDepthURL.path
+            
+            // Check for binary and metadata files in the same folder
+            let captureFolder = rawDepthURL.deletingLastPathComponent()
+            let binaryFile = captureFolder.appendingPathComponent("depth.depth")
+            let metadataFile = captureFolder.appendingPathComponent("metadata.json")
+            
+            if FileManager.default.fileExists(atPath: binaryFile.path) {
+                depthBinaryPath = binaryFile.path
+            }
+            
+            if FileManager.default.fileExists(atPath: metadataFile.path) {
+                metadataPath = metadataFile.path
+            }
+        }
+        
+        return (calibrationPath: calibrationPath, depthTIFFPath: depthTIFFPath, depthBinaryPath: depthBinaryPath, metadataPath: metadataPath)
+    }
+    
+    private func createCaptureSummary(in captureFolder: URL, captureData: CaptureData) {
+        let summaryFile = captureFolder.appendingPathComponent("README.md")
+        
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateStyle = .full
+        dateFormatter.timeStyle = .medium
+        
+        let summary = """
+        # TrueDepth Capture Session
+        
+        **Capture ID:** `\(captureData.id)`  
+        **Date:** \(dateFormatter.string(from: captureData.date))  
+        **Device:** \(UIDevice.current.model) (\(UIDevice.current.systemVersion))
+        
+        ## Files in this capture:
+        
+        - **calibration.json** - Camera calibration parameters (intrinsic/extrinsic matrices)
+        - **depth.tiff** - 16-bit depth map in TIFF format  
+        - **depth.depth** - Raw binary depth data
+        - **metadata.json** - Additional metadata about depth format
+        - **rgb_image.jpg** - Original RGB color image
+        - **depth_jet.jpg** - JET-colored depth visualization
+        
+        ## Capture Specifications:
+        
+        - **Video Dimensions:** \(captureData.videoDimensions.width) × \(captureData.videoDimensions.height)
+        - **Reference Dimensions:** \(captureData.referenceDimensions.width) × \(captureData.referenceDimensions.height)
+        - **Pixel Size:** \(String(format: "%.6f", captureData.pixelSize)) mm
+        - **Lens Distortion Center:** (\(String(format: "%.2f", captureData.lensDistortionCenter.x)), \(String(format: "%.2f", captureData.lensDistortionCenter.y)))
+        
+        ## Intrinsic Matrix:
+        ```
+        fx: \(String(format: "%.3f", captureData.intrinsicMatrix?.fx ?? 0))
+        fy: \(String(format: "%.3f", captureData.intrinsicMatrix?.fy ?? 0))
+        cx: \(String(format: "%.3f", captureData.intrinsicMatrix?.cx ?? 0))
+        cy: \(String(format: "%.3f", captureData.intrinsicMatrix?.cy ?? 0))
+        ```
+        
+        ---
+        *Generated by TrueDepth Streamer*
+        """
+        
+        do {
+            try summary.write(to: summaryFile, atomically: true, encoding: .utf8)
+            print("Capture summary created: \(summaryFile.path)")
+        } catch {
+            print("Error creating capture summary: \(error)")
+        }
+    }
+    
+    private func saveImagesToFolder(rgbImage: UIImage, jetImage: UIImage, captureFolder: URL) {
+        // Save RGB image
+        let rgbImagePath = captureFolder.appendingPathComponent("rgb_image.jpg")
+        if let jpegData = rgbImage.jpegData(compressionQuality: 0.9) {
+            do {
+                try jpegData.write(to: rgbImagePath)
+                print("RGB image saved to: \(rgbImagePath.path)")
+            } catch {
+                print("Error saving RGB image: \(error)")
+            }
+        }
+        
+        // Save JET depth image
+        let jetImagePath = captureFolder.appendingPathComponent("depth_jet.jpg")
+        if let jpegData = jetImage.jpegData(compressionQuality: 0.9) {
+            do {
+                try jpegData.write(to: jetImagePath)
+                print("JET depth image saved to: \(jetImagePath.path)")
+            } catch {
+                print("Error saving JET depth image: \(error)")
+            }
+        }
+    }
+    
+    private func setupNavigation() {
+        title = "TrueDepth Capture"
+        
+        // Add gallery button to navigation bar
+        let galleryButton = UIBarButtonItem(
+            title: "Gallery",
+            style: .plain,
+            target: self,
+            action: #selector(galleryButtonTapped)
+        )
+        navigationItem.rightBarButtonItem = galleryButton
+    }
+    
+    @objc private func galleryButtonTapped() {
+        // Create and present gallery view controller
+        let galleryVC = SimpleGalleryViewController()
+        let navController = UINavigationController(rootViewController: galleryVC)
+        navController.modalPresentationStyle = .fullScreen
+        present(navController, animated: true)
     }
     
     // MARK: - Video + Depth Frame Processing
@@ -1345,23 +1794,93 @@ class CameraViewController: UIViewController, AVCaptureDataOutputSynchronizerDel
                 if let UIImagedepthPixelBuffer = self.photoView?.depthBuffer(toImage: depthPixelBuffer){
                     print("Successfully converted depth buffer to JET image")
                     
-                    // Save raw depth map as TIFF (preserves 16-bit float data)
-                    let rawDepthURL = self.saveRawDepthMap(depthPixelBuffer)
-                    if let rawDepthURL = rawDepthURL {
-                        self.latestRawDepthFileURL = rawDepthURL
-                        print("Raw depth map saved successfully")
+                    // Create organized folder for this capture first
+                    let currentTimestamp = Date().timeIntervalSince1970
+                    let timestampInt = Int(currentTimestamp)
+                    let captureID = "capture_\(timestampInt)"
+                    let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+                    let captureFolder = documentsURL.appendingPathComponent("TrueDepthCaptures").appendingPathComponent(captureID)
+                    
+                    // Create capture folder if it doesn't exist
+                    do {
+                        try FileManager.default.createDirectory(at: captureFolder, withIntermediateDirectories: true, attributes: nil)
+                    } catch {
+                        print("Error creating capture folder: \(error)")
                     }
                     
-                    // Save calibration data
-                    self.saveCalibrationData(calibrationData: calibration,
-                                      intrinsicMatrix: intrinsic, 
-                                      fx: fx, fy: fy, cx: cx, cy: cy,
-                                      refWidth: refWidth, refHeight: refHeight,
-                                      videoWidth: videoWidth, videoHeight: videoHeight)
+                    // Save raw depth map directly to organized folder
+                    let rawDepthURL = self.saveRawDepthMap(depthPixelBuffer, captureFolder: captureFolder)
+                    if let rawDepthURL = rawDepthURL {
+                        self.latestRawDepthFileURL = rawDepthURL
+                        print("Raw depth map saved successfully to: \(rawDepthURL.path)")
+                    }
+                    
+                    // Save calibration data and get file paths
+                    let (calibrationPath, depthTIFFPath, depthBinaryPath, metadataPath) = self.saveCalibrationData(
+                        calibrationData: calibration,
+                        intrinsicMatrix: intrinsic, 
+                        fx: fx, fy: fy, cx: cx, cy: cy,
+                        refWidth: refWidth, refHeight: refHeight,
+                        videoWidth: videoWidth, videoHeight: videoHeight,
+                        timestamp: currentTimestamp
+                    )
+                    
+                    // Create capture data object for gallery
+                    let intrinsicData = IntrinsicMatrix(
+                        fx: Double(fx),
+                        fy: Double(fy),
+                        cx: Double(cx),
+                        cy: Double(cy),
+                        fx_original: Double(intrinsic.columns.0.x),
+                        fy_original: Double(intrinsic.columns.1.y),
+                        cx_original: Double(intrinsic.columns.2.x),
+                        cy_original: Double(intrinsic.columns.2.y)
+                    )
+                    
+                    let extrinsicData = ExtrinsicMatrix(
+                        column0: [Double(calibration.extrinsicMatrix.columns.0.x), Double(calibration.extrinsicMatrix.columns.0.y), Double(calibration.extrinsicMatrix.columns.0.z)],
+                        column1: [Double(calibration.extrinsicMatrix.columns.1.x), Double(calibration.extrinsicMatrix.columns.1.y), Double(calibration.extrinsicMatrix.columns.1.z)],
+                        column2: [Double(calibration.extrinsicMatrix.columns.2.x), Double(calibration.extrinsicMatrix.columns.2.y), Double(calibration.extrinsicMatrix.columns.2.z)],
+                        column3: [Double(calibration.extrinsicMatrix.columns.3.x), Double(calibration.extrinsicMatrix.columns.3.y), Double(calibration.extrinsicMatrix.columns.3.z)],
+                        description: "4x3 matrix [R|t] where R is 3x3 rotation matrix and t is 3x1 translation vector in millimeters"
+                    )
+                    
+                    let videoDims = Dimensions(width: videoWidth, height: videoHeight)
+                    let refDims = Dimensions(width: Int(refWidth), height: Int(refHeight))
+                    let lensCenter = Point(x: Double(calibration.lensDistortionCenter.x), y: Double(calibration.lensDistortionCenter.y))
+                    
+                    let captureData = CaptureData(
+                        timestamp: currentTimestamp,
+                        calibrationJSONPath: calibrationPath,
+                        depthTIFFPath: depthTIFFPath,
+                        depthBinaryPath: depthBinaryPath,
+                        metadataJSONPath: metadataPath,
+                        rgbImagePath: captureFolder.appendingPathComponent("rgb_image.jpg").path,
+                        jetImagePath: captureFolder.appendingPathComponent("depth_jet.jpg").path,
+                        intrinsicMatrix: intrinsicData,
+                        extrinsicMatrix: extrinsicData,
+                        videoDimensions: videoDims,
+                        referenceDimensions: refDims,
+                        pixelSize: Double(calibration.pixelSize),
+                        lensDistortionCenter: lensCenter
+                    )
+                    
+                    // Add to gallery manager
+                    CaptureManager.shared.addCapture(captureData)
+                    
+                    // Create capture summary file
+                    self.createCaptureSummary(in: captureFolder, captureData: captureData)
                     
                     // Save images on main thread
                     DispatchQueue.main.async { [weak self] in
                         guard let self = self else { return }
+                        
+                        // Save images to organized folder AND photo album
+                        self.saveImagesToFolder(
+                            rgbImage: UIImageVideoPixelBuffer,
+                            jetImage: UIImagedepthPixelBuffer,
+                            captureFolder: captureFolder
+                        )
                         
                         // Save JET-colored depth image to photo album
                         UIImageWriteToSavedPhotosAlbum(UIImagedepthPixelBuffer, nil, nil, nil)
@@ -1378,7 +1897,7 @@ class CameraViewController: UIViewController, AVCaptureDataOutputSynchronizerDel
                         let generator = UIImpactFeedbackGenerator(style: .medium)
                         generator.impactOccurred()
                         
-                        print("Capture completed: RGB image, JET depth image, raw depth TIFF, and calibration data saved")
+                        print("Capture completed: RGB image, JET depth image, raw depth TIFF, and calibration data saved to gallery")
                     }
                 }
             }
