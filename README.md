@@ -16,11 +16,14 @@ You will see something like below on your iphone.
 
 **NEW FEATURES**:
 - **Manual Capture Mode**: The app now features a blue "Capture" button for manual RGB-D image capture
-- **Share Functionality**: Green "Share" button allows easy sharing of calibration data via:
-  - AirDrop
-  - Messages/Email
-  - Files app
-  - Other apps
+- **Raw Depth Map Saving**: Each capture now saves **three types of data**:
+  1. **RGB Color Image** (saved to Photos app)
+  2. **JET-Colored Depth Image** (saved to Photos app for visualization)
+  3. **Raw 16-bit Float Depth Map** (saved as binary .depth file with metadata JSON)
+- **Share Functionality**: Green "Share" button allows easy sharing of:
+  - Camera calibration JSON data
+  - Raw depth map TIFF files
+  - Via AirDrop, Messages/Email, Files app, other apps
 - **Camera Calibration Data**: Each capture saves camera calibration data including:
   - Intrinsic matrix (fx, fy, cx, cy) - scaled and original values
   - Extrinsic matrix (rotation + translation)
@@ -28,15 +31,22 @@ You will see something like below on your iphone.
   - Video dimensions (640x480)
   - Pixel size/scale factors
   - Lens distortion parameters
-- **Multiple Save Locations**: 
-  - App Documents directory (private)
-  - Temporary directory (for sharing)
-  - Console output for debugging
+- **File Organization**: 
+  - `calibration_[timestamp].json` - Camera calibration parameters
+  - `raw_depth_map_[timestamp].depth` - Raw 16-bit float binary depth data
+  - `raw_depth_map_[timestamp]_metadata.json` - Metadata (dimensions, format info)
+  - Visual images saved to Photos app
 
 **USAGE**:
 1. Press the blue "Capture" button to capture RGB-D images and calibration data
-2. Press the green "Share" button to share the latest calibration JSON data
-3. Data is automatically saved with timestamp for easy identification
+2. Press the green "Share" button to share the latest calibration JSON and raw depth TIFF
+3. All data is automatically saved with timestamp for easy identification
+
+**DEPTH DATA FORMATS**:
+- **Visual**: JET-colored depth images in Photos app for quick viewing
+- **16-bit TIFF**: Standard format with scaled depth values (0-65535 range)
+- **Raw Binary**: .depth files preserve exact 16-bit float values
+- **Metadata**: JSON files with dimensions, format info, and depth range
 
 **NOTE**: The app is now in manual capture mode by default. The extrinsic matrix shows identity/zero values which is expected for TrueDepth camera reference frame.
 <div>

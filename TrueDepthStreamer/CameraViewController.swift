@@ -40,6 +40,7 @@ class CameraViewController: UIViewController, AVCaptureDataOutputSynchronizerDel
     private var photoView: PhotoView?
     private var latestCalibrationJSON: String?
     private var latestCalibrationFileURL: URL?
+    private var latestRawDepthFileURL: URL?
     
     private enum SessionSetupResult {
         case success
@@ -784,20 +785,78 @@ class CameraViewController: UIViewController, AVCaptureDataOutputSynchronizerDel
             }
         }
         
-        // Share the latest calibration data
-        guard let jsonString = latestCalibrationJSON,
-              let fileURL = latestCalibrationFileURL else {
+        // Share the latest calibration data and depth map
+        guard let jsonString = latestCalibrationJSON else {
             showAlert(title: "No Data", message: "Please capture some data first before sharing.")
             return
         }
         
+        // Create a single combined data file for easier sharing
+        let timestamp = Int(Date().timeIntervalSince1970)
+        let combinedFileName = "depth_capture_data_\(timestamp).json"
+        let tempDirectory = FileManager.default.temporaryDirectory
+        let combinedFileURL = tempDirectory.appendingPathComponent(combinedFileName)
+        
+        // Build combined data dictionary
+        var combinedData: [String: Any] = [
+            "calibration": jsonString,
+            "timestamp": timestamp,
+            "app_version": "TrueDepthStreamer 1.0"
+        ]
+        
+        // Add depth file information if available
+        if let rawDepthFileURL = latestRawDepthFileURL {
+            combinedData["depth_file"] = rawDepthFileURL.lastPathComponent
+            combinedData["depth_file_path"] = rawDepthFileURL.path
+            
+            // Check if it's a TIFF file
+            if rawDepthFileURL.pathExtension == "tiff" {
+                combinedData["depth_format"] = "16-bit TIFF"
+            }
+            
+            // Also check for companion metadata
+            let baseName = rawDepthFileURL.deletingPathExtension().lastPathComponent
+            let metadataFileName = "\(baseName)_metadata.json"
+            let metadataURL = rawDepthFileURL.deletingLastPathComponent().appendingPathComponent(metadataFileName)
+            
+            if let metadataData = try? Data(contentsOf: metadataURL),
+               let metadata = try? JSONSerialization.jsonObject(with: metadataData, options: []) {
+                combinedData["depth_metadata"] = metadata
+            }
+        }
+        
+        // Save combined data
+        do {
+            let jsonData = try JSONSerialization.data(withJSONObject: combinedData, options: .prettyPrinted)
+            try jsonData.write(to: combinedFileURL)
+            
+            // Share items
+            var activityItems: [Any] = [
+                "TrueDepth Camera Calibration Data\n\nTimestamp: \(timestamp)\n\nFiles included:\n- Calibration JSON\n- 16-bit Depth TIFF",
+                combinedFileURL
+            ]
+            
+            // Always include the depth TIFF file if available
+            if let rawDepthFileURL = latestRawDepthFileURL {
+                activityItems.append(rawDepthFileURL)
+                print("Sharing TIFF file: \(rawDepthFileURL.lastPathComponent)")
+            }
+            
+            presentShareSheet(activityItems: activityItems, sourceView: sender)
+            
+        } catch {
+            showAlert(title: "Error", message: "Failed to prepare data for sharing: \(error.localizedDescription)")
+        }
+    }
+    
+    private func presentShareSheet(activityItems: [Any], sourceView: UIView) {
         // Create activity view controller
-        let activityVC = UIActivityViewController(activityItems: [jsonString, fileURL], applicationActivities: nil)
+        let activityVC = UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
         
         // For iPad
         if let popoverController = activityVC.popoverPresentationController {
-            popoverController.sourceView = sender
-            popoverController.sourceRect = sender.bounds
+            popoverController.sourceView = sourceView
+            popoverController.sourceRect = sourceView.bounds
         }
         
         present(activityVC, animated: true)
@@ -807,6 +866,310 @@ class CameraViewController: UIViewController, AVCaptureDataOutputSynchronizerDel
         let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "OK", style: .default))
         present(alert, animated: true)
+    }
+    
+    private func saveRawDepthMap(_ depthPixelBuffer: CVPixelBuffer) -> URL? {
+        // Create timestamp for filename
+        let timestamp = Int(Date().timeIntervalSince1970)
+        let tiffFileName = "raw_depth_map_\(timestamp).tiff"
+        
+        // Use temporary directory for better compatibility with sharing
+        let tempDirectory = FileManager.default.temporaryDirectory
+        let tiffFileURL = tempDirectory.appendingPathComponent(tiffFileName)
+        
+        // Lock the pixel buffer for reading
+        CVPixelBufferLockBaseAddress(depthPixelBuffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(depthPixelBuffer, .readOnly) }
+        
+        // Get buffer properties
+        let width = CVPixelBufferGetWidth(depthPixelBuffer)
+        let height = CVPixelBufferGetHeight(depthPixelBuffer)
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(depthPixelBuffer)
+        
+        // Verify this is a 16-bit float format
+        let pixelFormat = CVPixelBufferGetPixelFormatType(depthPixelBuffer)
+        guard pixelFormat == kCVPixelFormatType_DepthFloat16 else {
+            print("Error: Unexpected pixel format. Expected DepthFloat16, got: \(pixelFormat)")
+            return nil
+        }
+        
+        // Get the raw data pointer
+        guard let baseAddress = CVPixelBufferGetBaseAddress(depthPixelBuffer) else {
+            print("Error: Could not get base address of pixel buffer")
+            return nil
+        }
+        
+        // Save both TIFF and binary formats
+        
+        // 1. First save as 16-bit grayscale TIFF (converted from float16)
+        let tiffSaved = create16BitTIFF(from: depthPixelBuffer, fileURL: tiffFileURL)
+        
+        // 2. Also save raw binary data with metadata for exact precision
+        let dataLength = height * bytesPerRow
+        let data = Data(bytes: baseAddress, count: dataLength)
+        
+        let binaryFileName = "raw_depth_map_\(timestamp).depth"
+        let binaryFileURL = tempDirectory.appendingPathComponent(binaryFileName)
+        
+        // Create metadata dictionary
+        let metadata: [String: Any] = [
+            "width": width,
+            "height": height,
+            "bytesPerRow": bytesPerRow,
+            "pixelFormat": "DepthFloat16",
+            "timestamp": timestamp,
+            "tiffFile": tiffFileName
+        ]
+        
+        // Save metadata as companion JSON file
+        let metadataFileName = "raw_depth_map_\(timestamp)_metadata.json"
+        let metadataFileURL = tempDirectory.appendingPathComponent(metadataFileName)
+        
+        do {
+            // Save raw depth data
+            try data.write(to: binaryFileURL)
+            
+            // Save metadata
+            let metadataData = try JSONSerialization.data(withJSONObject: metadata, options: .prettyPrinted)
+            try metadataData.write(to: metadataFileURL)
+            
+            print("Raw depth map saved successfully:")
+            print("  - TIFF file: \(tiffFileURL.path)")
+            print("  - Binary data: \(binaryFileURL.path)")
+            print("  - Metadata: \(metadataFileURL.path)")
+            print("  - Dimensions: \(width)x\(height)")
+            print("  - Bytes per row: \(bytesPerRow)")
+            
+            // Return the TIFF file URL as primary (more compatible)
+            return tiffSaved ? tiffFileURL : binaryFileURL
+        } catch {
+            print("Error saving raw depth map: \(error)")
+            
+            // Fallback: Return TIFF if it was created
+            return tiffSaved ? tiffFileURL : nil
+        }
+    }
+    
+    private func create16BitTIFF(from depthPixelBuffer: CVPixelBuffer, fileURL: URL) -> Bool {
+        // Get buffer properties
+        let width = CVPixelBufferGetWidth(depthPixelBuffer)
+        let height = CVPixelBufferGetHeight(depthPixelBuffer)
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(depthPixelBuffer)
+        
+        guard let baseAddress = CVPixelBufferGetBaseAddress(depthPixelBuffer) else {
+            return false
+        }
+        
+        // Convert 16-bit float to 16-bit unsigned integer (scaled to use full range)
+        let outputBytesPerRow = width * 2 // 2 bytes per pixel for 16-bit
+        let outputData = NSMutableData(length: height * outputBytesPerRow)!
+        let outputPtr = outputData.mutableBytes.assumingMemoryBound(to: UInt16.self)
+        
+        // Find min/max for scaling
+        var minDepth: Float = Float.greatestFiniteMagnitude
+        var maxDepth: Float = -Float.greatestFiniteMagnitude
+        var validDepthCount = 0
+        
+        for y in 0..<height {
+            let rowData = baseAddress.advanced(by: y * bytesPerRow)
+            let float16Ptr = rowData.assumingMemoryBound(to: UInt16.self)
+            
+            for x in 0..<width {
+                var f16Value = float16Ptr[x]
+                var f32Value: Float = 0
+                var src = vImage_Buffer(data: &f16Value, height: 1, width: 1, rowBytes: 2)
+                var dst = vImage_Buffer(data: &f32Value, height: 1, width: 1, rowBytes: 4)
+                vImageConvert_Planar16FtoPlanarF(&src, &dst, 0)
+                
+                // Check for valid depth values
+                if !f32Value.isNaN && !f32Value.isInfinite && f32Value > 0 && f32Value < 10.0 {
+                    minDepth = min(minDepth, f32Value)
+                    maxDepth = max(maxDepth, f32Value)
+                    validDepthCount += 1
+                }
+            }
+        }
+        
+        // If no valid depths found, use default range
+        if validDepthCount == 0 || minDepth >= maxDepth {
+            print("Warning: No valid depth values found. Using default range 0.1-2.0 meters")
+            minDepth = 0.1
+            maxDepth = 2.0
+        }
+        
+        print("Depth statistics: Min=\(minDepth)m, Max=\(maxDepth)m, Valid pixels=\(validDepthCount)")
+        
+        // Convert to 16-bit unsigned
+        let range = maxDepth - minDepth
+        
+        // Handle edge case where all depths are the same
+        if range <= 0 {
+            print("Warning: Depth range is zero or negative. Using default values.")
+            // Fill with middle gray value
+            for i in 0..<(width * height) {
+                outputPtr[i] = 32768
+            }
+        } else {
+            for y in 0..<height {
+                let rowData = baseAddress.advanced(by: y * bytesPerRow)
+                let float16Ptr = rowData.assumingMemoryBound(to: UInt16.self)
+                
+                for x in 0..<width {
+                    var f16Value = float16Ptr[x]
+                    var f32Value: Float = 0
+                    var src = vImage_Buffer(data: &f16Value, height: 1, width: 1, rowBytes: 2)
+                    var dst = vImage_Buffer(data: &f32Value, height: 1, width: 1, rowBytes: 4)
+                    vImageConvert_Planar16FtoPlanarF(&src, &dst, 0)
+                    
+                    // Handle invalid values
+                    if f32Value.isNaN || f32Value.isInfinite || f32Value <= 0 {
+                        // Use 0 for invalid depths (will appear black)
+                        outputPtr[y * width + x] = 0
+                    } else {
+                        // Clamp value to valid range
+                        let clampedValue = max(minDepth, min(maxDepth, f32Value))
+                        let normalized = (clampedValue - minDepth) / range
+                        
+                        // Ensure normalized is in 0-1 range
+                        let safeNormalized = max(0, min(1, normalized))
+                        outputPtr[y * width + x] = UInt16(safeNormalized * 65535)
+                    }
+                }
+            }
+        }
+        
+        // Create CGImage
+        let colorSpace = CGColorSpaceCreateDeviceGray()
+        guard let dataProvider = CGDataProvider(data: outputData) else {
+            return false
+        }
+        
+        guard let cgImage = CGImage(
+            width: width,
+            height: height,
+            bitsPerComponent: 16,
+            bitsPerPixel: 16,
+            bytesPerRow: outputBytesPerRow,
+            space: colorSpace,
+            bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.none.rawValue),
+            provider: dataProvider,
+            decode: nil,
+            shouldInterpolate: false,
+            intent: .defaultIntent
+        ) else {
+            return false
+        }
+        
+        // Save as TIFF
+        guard let destination = CGImageDestinationCreateWithURL(fileURL as CFURL, kUTTypeTIFF, 1, nil) else {
+            return false
+        }
+        
+        // Add metadata
+        let tiffProperties: [CFString: Any] = [
+            kCGImagePropertyTIFFDictionary: [
+                kCGImagePropertyTIFFCompression: 1, // No compression
+                kCGImagePropertyTIFFSoftware: "TrueDepthStreamer",
+                kCGImagePropertyTIFFImageDescription: "16-bit depth map (scaled from float16). Min depth: \(minDepth)m, Max depth: \(maxDepth)m"
+            ]
+        ]
+        
+        CGImageDestinationAddImage(destination, cgImage, tiffProperties as CFDictionary)
+        
+        return CGImageDestinationFinalize(destination)
+    }
+    
+    private func createGrayscaleTIFF(from depthPixelBuffer: CVPixelBuffer, fileURL: URL) -> URL? {
+        // Get buffer properties
+        let width = CVPixelBufferGetWidth(depthPixelBuffer)
+        let height = CVPixelBufferGetHeight(depthPixelBuffer)
+        
+        // Create a simple grayscale image from depth data
+        guard let baseAddress = CVPixelBufferGetBaseAddress(depthPixelBuffer) else {
+            return nil
+        }
+        
+        // Convert 16-bit float to 8-bit grayscale for compatibility
+        var minDepth: Float = Float.greatestFiniteMagnitude
+        var maxDepth: Float = -Float.greatestFiniteMagnitude
+        
+        // Find min/max depth values
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(depthPixelBuffer)
+        for y in 0..<height {
+            let rowData = baseAddress.advanced(by: y * bytesPerRow)
+            let float16Ptr = rowData.assumingMemoryBound(to: UInt16.self)
+            
+            for x in 0..<width {
+                var f16Value = float16Ptr[x]
+                var f32Value: Float = 0
+                var src = vImage_Buffer(data: &f16Value, height: 1, width: 1, rowBytes: 2)
+                var dst = vImage_Buffer(data: &f32Value, height: 1, width: 1, rowBytes: 4)
+                vImageConvert_Planar16FtoPlanarF(&src, &dst, 0)
+                
+                if f32Value > 0 && f32Value < Float.greatestFiniteMagnitude {
+                    minDepth = min(minDepth, f32Value)
+                    maxDepth = max(maxDepth, f32Value)
+                }
+            }
+        }
+        
+        // Create 8-bit grayscale data
+        let grayscaleData = NSMutableData(length: width * height)!
+        let grayscalePtr = grayscaleData.mutableBytes.assumingMemoryBound(to: UInt8.self)
+        
+        // Convert depth to grayscale
+        for y in 0..<height {
+            let rowData = baseAddress.advanced(by: y * bytesPerRow)
+            let float16Ptr = rowData.assumingMemoryBound(to: UInt16.self)
+            
+            for x in 0..<width {
+                var f16Value = float16Ptr[x]
+                var f32Value: Float = 0
+                var src = vImage_Buffer(data: &f16Value, height: 1, width: 1, rowBytes: 2)
+                var dst = vImage_Buffer(data: &f32Value, height: 1, width: 1, rowBytes: 4)
+                vImageConvert_Planar16FtoPlanarF(&src, &dst, 0)
+                
+                // Normalize to 0-255
+                let normalized = (f32Value - minDepth) / (maxDepth - minDepth)
+                grayscalePtr[y * width + x] = UInt8(normalized * 255)
+            }
+        }
+        
+        // Create CGImage
+        let colorSpace = CGColorSpaceCreateDeviceGray()
+        guard let dataProvider = CGDataProvider(data: grayscaleData) else {
+            return nil
+        }
+        
+        guard let cgImage = CGImage(
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bitsPerPixel: 8,
+            bytesPerRow: width,
+            space: colorSpace,
+            bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.none.rawValue),
+            provider: dataProvider,
+            decode: nil,
+            shouldInterpolate: false,
+            intent: .defaultIntent
+        ) else {
+            return nil
+        }
+        
+        // Save as TIFF
+        guard let destination = CGImageDestinationCreateWithURL(fileURL as CFURL, kUTTypeTIFF, 1, nil) else {
+            return nil
+        }
+        
+        CGImageDestinationAddImage(destination, cgImage, nil)
+        
+        if CGImageDestinationFinalize(destination) {
+            print("Grayscale depth map saved as TIFF: \(fileURL.path)")
+            return fileURL
+        }
+        
+        return nil
     }
     
     private func saveCalibrationData(calibrationData: AVCameraCalibrationData,
@@ -980,7 +1343,14 @@ class CameraViewController: UIViewController, AVCaptureDataOutputSynchronizerDel
             if let UIImageVideoPixelBuffer = UIImage(pixelBuffer: videoPixelBuffer){
                 // Convert depth buffer to image using the pre-initialized PhotoView
                 if let UIImagedepthPixelBuffer = self.photoView?.depthBuffer(toImage: depthPixelBuffer){
-                    print("Successfully converted depth buffer to image")
+                    print("Successfully converted depth buffer to JET image")
+                    
+                    // Save raw depth map as TIFF (preserves 16-bit float data)
+                    let rawDepthURL = self.saveRawDepthMap(depthPixelBuffer)
+                    if let rawDepthURL = rawDepthURL {
+                        self.latestRawDepthFileURL = rawDepthURL
+                        print("Raw depth map saved successfully")
+                    }
                     
                     // Save calibration data
                     self.saveCalibrationData(calibrationData: calibration,
@@ -993,10 +1363,11 @@ class CameraViewController: UIViewController, AVCaptureDataOutputSynchronizerDel
                     DispatchQueue.main.async { [weak self] in
                         guard let self = self else { return }
                         
-                        // depth image save
+                        // Save JET-colored depth image to photo album
                         UIImageWriteToSavedPhotosAlbum(UIImagedepthPixelBuffer, nil, nil, nil)
                         usleep(5000)  //5ms
-                        // color image save
+                        
+                        // Save color RGB image to photo album
                         UIImageWriteToSavedPhotosAlbum(UIImageVideoPixelBuffer, nil, nil, nil)
                         usleep(5000)  //5ms
                         
@@ -1006,6 +1377,8 @@ class CameraViewController: UIViewController, AVCaptureDataOutputSynchronizerDel
                         // Provide haptic feedback
                         let generator = UIImpactFeedbackGenerator(style: .medium)
                         generator.impactOccurred()
+                        
+                        print("Capture completed: RGB image, JET depth image, raw depth TIFF, and calibration data saved")
                     }
                 }
             }
