@@ -139,6 +139,26 @@
                                     <action selector="captureButtonPressed:" destination="BYZ-38-t0r" eventType="touchUpInside" id="cap-act-123"/>
                                 </connections>
                             </button>
+                            <button opaque="NO" contentMode="scaleToFill" contentHorizontalAlignment="center" contentVerticalAlignment="center" buttonType="roundedRect" lineBreakMode="middleTruncation" translatesAutoresizingMaskIntoConstraints="NO" id="shr-but-123" userLabel="Share Button">
+                                <rect key="frame" x="280" y="700" width="80" height="50"/>
+                                <color key="backgroundColor" red="0.0" green="0.8" blue="0.4" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
+                                <constraints>
+                                    <constraint firstAttribute="width" constant="80" id="shr-wid-123"/>
+                                    <constraint firstAttribute="height" constant="50" id="shr-hei-123"/>
+                                </constraints>
+                                <fontDescription key="fontDescription" type="boldSystem" pointSize="16"/>
+                                <state key="normal" title="Share">
+                                    <color key="titleColor" white="1" alpha="1" colorSpace="custom" customColorSpace="genericGamma22GrayColorSpace"/>
+                                </state>
+                                <userDefinedRuntimeAttributes>
+                                    <userDefinedRuntimeAttribute type="number" keyPath="layer.cornerRadius">
+                                        <real key="value" value="25"/>
+                                    </userDefinedRuntimeAttribute>
+                                </userDefinedRuntimeAttributes>
+                                <connections>
+                                    <action selector="shareButtonPressed:" destination="BYZ-38-t0r" eventType="touchUpInside" id="shr-act-123"/>
+                                </connections>
+                            </button>
                         </subviews>
                         <color key="backgroundColor" red="0.0" green="0.0" blue="0.0" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
                         <constraints>
@@ -160,6 +180,8 @@
                             <constraint firstItem="B08-Wv-b5R" firstAttribute="centerY" secondItem="Eqv-7y-uCz" secondAttribute="centerY" id="usf-3D-Qpy"/>
                             <constraint firstItem="cap-but-123" firstAttribute="centerX" secondItem="3Gl-sb-vLR" secondAttribute="centerX" id="cap-cnx-123"/>
                             <constraint firstItem="cap-but-123" firstAttribute="bottom" secondItem="3Gl-sb-vLR" secondAttribute="bottom" constant="-28" id="cap-bot-123"/>
+                            <constraint firstItem="shr-but-123" firstAttribute="leading" secondItem="cap-but-123" secondAttribute="trailing" constant="15" id="shr-lea-123"/>
+                            <constraint firstItem="shr-but-123" firstAttribute="centerY" secondItem="cap-but-123" secondAttribute="centerY" id="shr-cny-123"/>
                         </constraints>
                         <viewLayoutGuide key="safeArea" id="3Gl-sb-vLR"/>
                     </view>
@@ -175,6 +197,7 @@
                         <outlet property="smoothDepthLabel" destination="qCU-4v-Pkw" id="EXl-p1-L6t"/>
                         <outlet property="touchDepth" destination="AWT-2N-ltu" id="Maj-Kq-cAE"/>
                         <outlet property="captureButton" destination="cap-but-123" id="cap-out-123"/>
+                        <outlet property="shareButton" destination="shr-but-123" id="shr-out-123"/>
                     </connections>
                 </viewController>
                 <placeholder placeholderIdentifier="IBFirstResponder" id="dkx-z0-nzr" sceneMemberID="firstResponder"/>

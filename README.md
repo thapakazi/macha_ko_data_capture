@@ -16,16 +16,29 @@ You will see something like below on your iphone.
 
 **NEW FEATURES**:
 - **Manual Capture Mode**: The app now features a blue "Capture" button for manual RGB-D image capture
+- **Share Functionality**: Green "Share" button allows easy sharing of calibration data via:
+  - AirDrop
+  - Messages/Email
+  - Files app
+  - Other apps
 - **Camera Calibration Data**: Each capture saves camera calibration data including:
-  - Intrinsic matrix (fx, fy, cx, cy)
-  - Extrinsic matrix
-  - Reference dimensions
-  - Video dimensions
-  - Pixel size/scale
+  - Intrinsic matrix (fx, fy, cx, cy) - scaled and original values
+  - Extrinsic matrix (rotation + translation)
+  - Reference dimensions (4032x3024)
+  - Video dimensions (640x480)
+  - Pixel size/scale factors
   - Lens distortion parameters
-- **Calibration data is saved as JSON files** in the app's documents directory with timestamp
+- **Multiple Save Locations**: 
+  - App Documents directory (private)
+  - Temporary directory (for sharing)
+  - Console output for debugging
 
-**NOTE**: The app is now in manual capture mode by default. Press the "Capture" button to save RGB-D images and calibration data.
+**USAGE**:
+1. Press the blue "Capture" button to capture RGB-D images and calibration data
+2. Press the green "Share" button to share the latest calibration JSON data
+3. Data is automatically saved with timestamp for easy identification
+
+**NOTE**: The app is now in manual capture mode by default. The extrinsic matrix shows identity/zero values which is expected for TrueDepth camera reference frame.
 <div>
 <div align=center><img src="figures/screen1.jpg" alt="img" width=30%>
 </div>

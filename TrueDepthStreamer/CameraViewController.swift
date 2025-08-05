@@ -33,9 +33,13 @@ class CameraViewController: UIViewController, AVCaptureDataOutputSynchronizerDel
     
     @IBOutlet weak var captureButton: UIButton!
     
+    @IBOutlet weak var shareButton: UIButton!
+    
     private var isManualCaptureMode = true
     private var shouldCapture = false
     private var photoView: PhotoView?
+    private var latestCalibrationJSON: String?
+    private var latestCalibrationFileURL: URL?
     
     private enum SessionSetupResult {
         case success
@@ -770,6 +774,41 @@ class CameraViewController: UIViewController, AVCaptureDataOutputSynchronizerDel
         }
     }
     
+    @IBAction func shareButtonPressed(_ sender: UIButton) {
+        // Animate button press
+        UIView.animate(withDuration: 0.1, animations: {
+            sender.transform = CGAffineTransform(scaleX: 0.95, y: 0.95)
+        }) { _ in
+            UIView.animate(withDuration: 0.1) {
+                sender.transform = CGAffineTransform.identity
+            }
+        }
+        
+        // Share the latest calibration data
+        guard let jsonString = latestCalibrationJSON,
+              let fileURL = latestCalibrationFileURL else {
+            showAlert(title: "No Data", message: "Please capture some data first before sharing.")
+            return
+        }
+        
+        // Create activity view controller
+        let activityVC = UIActivityViewController(activityItems: [jsonString, fileURL], applicationActivities: nil)
+        
+        // For iPad
+        if let popoverController = activityVC.popoverPresentationController {
+            popoverController.sourceView = sender
+            popoverController.sourceRect = sender.bounds
+        }
+        
+        present(activityVC, animated: true)
+    }
+    
+    private func showAlert(title: String, message: String) {
+        let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "OK", style: .default))
+        present(alert, animated: true)
+    }
+    
     private func saveCalibrationData(calibrationData: AVCameraCalibrationData,
                                    intrinsicMatrix: simd_float3x3,
                                    fx: CGFloat, fy: CGFloat, cx: CGFloat, cy: CGFloat,
@@ -801,9 +840,25 @@ class CameraViewController: UIViewController, AVCaptureDataOutputSynchronizerDel
             "timestamp": Date().timeIntervalSince1970
         ]
         
-        // Skip extrinsic matrix for now due to access issues
-        // We'll focus on the intrinsic matrix and other calibration data
-        calibrationDict["extrinsicMatrix"] = "Not available - access method needs investigation"
+        // Add extrinsic matrix (simd_float4x3 - 4 columns, 3 rows)
+        // Format: [R|t] where R is 3x3 rotation matrix and t is 3x1 translation vector
+        let extrinsic = calibrationData.extrinsicMatrix
+        
+        // Access the matrix columns (4 simd_float3 columns)
+        let col0 = extrinsic.columns.0  // simd_float3
+        let col1 = extrinsic.columns.1  // simd_float3
+        let col2 = extrinsic.columns.2  // simd_float3
+        let col3 = extrinsic.columns.3  // simd_float3 (translation vector)
+        
+        calibrationDict["extrinsicMatrix"] = [
+            "rotation_translation_matrix": [
+                "column0": [Float(col0.x), Float(col0.y), Float(col0.z)],  // R column 1
+                "column1": [Float(col1.x), Float(col1.y), Float(col1.z)],  // R column 2
+                "column2": [Float(col2.x), Float(col2.y), Float(col2.z)],  // R column 3
+                "column3": [Float(col3.x), Float(col3.y), Float(col3.z)]   // t translation (mm)
+            ],
+            "description": "4x3 matrix [R|t] where R is 3x3 rotation matrix and t is 3x1 translation vector in millimeters"
+        ]
         
         // Add lens distortion coefficients
         calibrationDict["lensDistortionCenter"] = [
@@ -814,20 +869,42 @@ class CameraViewController: UIViewController, AVCaptureDataOutputSynchronizerDel
         // Add pixel size (convert to Double to ensure JSON serialization works)
         calibrationDict["pixelSize"] = Double(calibrationData.pixelSize)
         
-        // Save to UserDefaults for now (you can modify to save to file or database)
+        // Save calibration data
         do {
             let jsonData = try JSONSerialization.data(withJSONObject: calibrationDict, options: .prettyPrinted)
             let jsonString = String(data: jsonData, encoding: .utf8)
             print("Camera Calibration Data:")
             print(jsonString ?? "Failed to convert to string")
             
-            // Save to documents directory
+            // Store latest data for sharing
+            self.latestCalibrationJSON = jsonString
+            
+            let timestamp = Int(Date().timeIntervalSince1970)
+            let fileName = "calibration_\(timestamp).json"
+            
+            // Save to documents directory (app private)
             if let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
-                let fileName = "calibration_\(Int(Date().timeIntervalSince1970)).json"
                 let fileURL = documentsPath.appendingPathComponent(fileName)
                 try jsonData.write(to: fileURL)
-                print("Calibration data saved to: \(fileURL.path)")
+                print("Calibration data saved to Documents: \(fileURL.path)")
+                self.latestCalibrationFileURL = fileURL
             }
+            
+            // Also save to Files app accessible directory
+            let fileManager = FileManager.default
+            if let sharedContainerURL = fileManager.containerURL(forSecurityApplicationGroupIdentifier: "group.truedepth.calibration") {
+                // If you have an app group configured
+                let sharedFileURL = sharedContainerURL.appendingPathComponent(fileName)
+                try jsonData.write(to: sharedFileURL)
+                print("Calibration data saved to shared container: \(sharedFileURL.path)")
+            } else {
+                // Fallback: Create a temporary file for sharing
+                let tempURL = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(fileName)
+                try jsonData.write(to: tempURL)
+                print("Calibration data saved to temp directory for sharing: \(tempURL.path)")
+                self.latestCalibrationFileURL = tempURL
+            }
+            
         } catch {
             print("Error serializing calibration data: \(error)")
         }
