@@ -14,7 +14,18 @@ To build the code, open the project with Xcode, and you should be able to compil
 
 You will see something like below on your iphone. 
 
-**NOTE**: **Once the app is opened, it automatically starts to capture RGB-D images and save them into iPhone's album. It won’t stop until you close the app.**
+**NEW FEATURES**:
+- **Manual Capture Mode**: The app now features a blue "Capture" button for manual RGB-D image capture
+- **Camera Calibration Data**: Each capture saves camera calibration data including:
+  - Intrinsic matrix (fx, fy, cx, cy)
+  - Extrinsic matrix
+  - Reference dimensions
+  - Video dimensions
+  - Pixel size/scale
+  - Lens distortion parameters
+- **Calibration data is saved as JSON files** in the app's documents directory with timestamp
+
+**NOTE**: The app is now in manual capture mode by default. Press the "Capture" button to save RGB-D images and calibration data.
 <div>
 <div align=center><img src="figures/screen1.jpg" alt="img" width=30%>
 </div>

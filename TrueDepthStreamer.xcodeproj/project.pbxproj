@@ -202,7 +202,7 @@
 				TargetAttributes = {
 					E422DFB61CEF894F0047D7A4 = {
 						CreatedOnToolsVersion = 8.0;
-						DevelopmentTeam = R24TLJ3YBG;
+						DevelopmentTeam = PGJC3Z8HL9;
 						LastSwiftMigration = 1100;
 						ProvisioningStyle = Automatic;
 					};
@@ -411,7 +411,7 @@
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = R24TLJ3YBG;
+				DEVELOPMENT_TEAM = PGJC3Z8HL9;
 				INFOPLIST_FILE = TrueDepthStreamer/Info.plist;
 				INSTALL_PATH = "";
 				IPHONEOS_DEPLOYMENT_TARGET = 12.0;
@@ -437,7 +437,7 @@
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = R24TLJ3YBG;
+				DEVELOPMENT_TEAM = PGJC3Z8HL9;
 				INFOPLIST_FILE = TrueDepthStreamer/Info.plist;
 				INSTALL_PATH = "";
 				IPHONEOS_DEPLOYMENT_TARGET = 12.0;

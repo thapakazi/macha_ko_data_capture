@@ -31,6 +31,12 @@ class CameraViewController: UIViewController, AVCaptureDataOutputSynchronizerDel
     
     @IBOutlet weak var autoPanningSwitch: UISwitch!
     
+    @IBOutlet weak var captureButton: UIButton!
+    
+    private var isManualCaptureMode = true
+    private var shouldCapture = false
+    private var photoView: PhotoView?
+    
     private enum SessionSetupResult {
         case success
         case notAuthorized
@@ -95,6 +101,9 @@ class CameraViewController: UIViewController, AVCaptureDataOutputSynchronizerDel
         super.viewDidLoad()
         
         viewFrameSize = self.view.frame.size
+        
+        // Initialize PhotoView on main thread
+        photoView = PhotoView()
         
         let tapGestureJET = UITapGestureRecognizer(target: self, action: #selector(focusAndExposeTap))
         jetView.addGestureRecognizer(tapGestureJET)
@@ -747,6 +756,83 @@ class CameraViewController: UIViewController, AVCaptureDataOutputSynchronizerDel
         }
     }
     
+    @IBAction func captureButtonPressed(_ sender: UIButton) {
+        print("Capture button pressed")
+        shouldCapture = true
+        
+        // Animate button press
+        UIView.animate(withDuration: 0.1, animations: {
+            sender.transform = CGAffineTransform(scaleX: 0.95, y: 0.95)
+        }) { _ in
+            UIView.animate(withDuration: 0.1) {
+                sender.transform = CGAffineTransform.identity
+            }
+        }
+    }
+    
+    private func saveCalibrationData(calibrationData: AVCameraCalibrationData,
+                                   intrinsicMatrix: simd_float3x3,
+                                   fx: CGFloat, fy: CGFloat, cx: CGFloat, cy: CGFloat,
+                                   refWidth: CGFloat, refHeight: CGFloat,
+                                   videoWidth: Int, videoHeight: Int) {
+        var calibrationDict: [String: Any] = [
+            "intrinsicMatrix": [
+                "fx": fx,
+                "fy": fy,
+                "cx": cx,
+                "cy": cy,
+                "fx_original": Float(intrinsicMatrix.columns.0.x),
+                "fy_original": Float(intrinsicMatrix.columns.1.y),
+                "cx_original": Float(intrinsicMatrix.columns.2.x),
+                "cy_original": Float(intrinsicMatrix.columns.2.y)
+            ],
+            "referenceDimensions": [
+                "width": refWidth,
+                "height": refHeight
+            ],
+            "videoDimensions": [
+                "width": videoWidth,
+                "height": videoHeight
+            ],
+            "pixelSize": [
+                "width_scale": CGFloat(videoWidth) / refWidth,
+                "height_scale": CGFloat(videoHeight) / refHeight
+            ],
+            "timestamp": Date().timeIntervalSince1970
+        ]
+        
+        // Skip extrinsic matrix for now due to access issues
+        // We'll focus on the intrinsic matrix and other calibration data
+        calibrationDict["extrinsicMatrix"] = "Not available - access method needs investigation"
+        
+        // Add lens distortion coefficients
+        calibrationDict["lensDistortionCenter"] = [
+            "x": Double(calibrationData.lensDistortionCenter.x),
+            "y": Double(calibrationData.lensDistortionCenter.y)
+        ]
+        
+        // Add pixel size (convert to Double to ensure JSON serialization works)
+        calibrationDict["pixelSize"] = Double(calibrationData.pixelSize)
+        
+        // Save to UserDefaults for now (you can modify to save to file or database)
+        do {
+            let jsonData = try JSONSerialization.data(withJSONObject: calibrationDict, options: .prettyPrinted)
+            let jsonString = String(data: jsonData, encoding: .utf8)
+            print("Camera Calibration Data:")
+            print(jsonString ?? "Failed to convert to string")
+            
+            // Save to documents directory
+            if let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
+                let fileName = "calibration_\(Int(Date().timeIntervalSince1970)).json"
+                let fileURL = documentsPath.appendingPathComponent(fileName)
+                try jsonData.write(to: fileURL)
+                print("Calibration data saved to: \(fileURL.path)")
+            }
+        } catch {
+            print("Error serializing calibration data: \(error)")
+        }
+    }
+    
     // MARK: - Video + Depth Frame Processing
     
     func dataOutputSynchronizer(_ synchronizer: AVCaptureDataOutputSynchronizer,
@@ -792,10 +878,10 @@ class CameraViewController: UIViewController, AVCaptureDataOutputSynchronizerDel
         let wScale = CGFloat(videoWidth) / refWidth;
         let hScale = CGFloat(videoHeight)  / refHeight;
         
-        let fx_ori = (intrinsic.columns.0)[0];
-        let fy_ori = (intrinsic.columns.1)[1];
-        let cx_ori = (intrinsic.columns.2)[0];
-        let cy_ori = (intrinsic.columns.2)[1];
+        let fx_ori = intrinsic.columns.0.x;
+        let fy_ori = intrinsic.columns.1.y;
+        let cx_ori = intrinsic.columns.2.x;
+        let cy_ori = intrinsic.columns.2.y;
         
         let fx = CGFloat(fx_ori) * wScale;
         let fy =  CGFloat(fy_ori) * hScale ;
@@ -805,17 +891,48 @@ class CameraViewController: UIViewController, AVCaptureDataOutputSynchronizerDel
 //       lxk: ----------------------  end read calibration info ------------------------------------///
         
         
-        if let UIImageVideoPixelBuffer = UIImage(pixelBuffer: videoPixelBuffer){
-               let photoView : PhotoView! = PhotoView()
-               if let UIImagedepthPixelBuffer : UIImage = photoView.depthBuffer(toImage: depthPixelBuffer){
-                   // depth image save
-                   UIImageWriteToSavedPhotosAlbum(UIImagedepthPixelBuffer, nil, nil, nil)
-                   usleep(5000)  //5ms
-                   // color image save
-                   UIImageWriteToSavedPhotosAlbum(UIImageVideoPixelBuffer, nil, nil, nil)
-                   usleep(5000)  //5ms
-               }
-           }
+        // Only capture if manual capture mode is disabled or capture button was pressed
+        if !isManualCaptureMode || shouldCapture {
+            // First, ensure we have calibration data
+            guard let calibration = calibration else {
+                print("No calibration data available")
+                shouldCapture = false
+                return
+            }
+            
+            if let UIImageVideoPixelBuffer = UIImage(pixelBuffer: videoPixelBuffer){
+                // Convert depth buffer to image using the pre-initialized PhotoView
+                if let UIImagedepthPixelBuffer = self.photoView?.depthBuffer(toImage: depthPixelBuffer){
+                    print("Successfully converted depth buffer to image")
+                    
+                    // Save calibration data
+                    self.saveCalibrationData(calibrationData: calibration,
+                                      intrinsicMatrix: intrinsic, 
+                                      fx: fx, fy: fy, cx: cx, cy: cy,
+                                      refWidth: refWidth, refHeight: refHeight,
+                                      videoWidth: videoWidth, videoHeight: videoHeight)
+                    
+                    // Save images on main thread
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self = self else { return }
+                        
+                        // depth image save
+                        UIImageWriteToSavedPhotosAlbum(UIImagedepthPixelBuffer, nil, nil, nil)
+                        usleep(5000)  //5ms
+                        // color image save
+                        UIImageWriteToSavedPhotosAlbum(UIImageVideoPixelBuffer, nil, nil, nil)
+                        usleep(5000)  //5ms
+                        
+                        // Reset capture flag
+                        self.shouldCapture = false
+                        
+                        // Provide haptic feedback
+                        let generator = UIImpactFeedbackGenerator(style: .medium)
+                        generator.impactOccurred()
+                    }
+                }
+            }
+        }
         
         if JETEnabled {
             if !videoDepthConverter.isPrepared {
